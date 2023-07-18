@@ -133,6 +133,61 @@ if (durationMsEst > 0) {
     console.log('Estimation benchmark finished too quickly.');
 }
 
+console.log(`\n--- Benchmarking estimateJaccardSimilarity WITH EARLY TERMINATION ---`);
+const optimizationOptionsSet = [
+    { threshold: 0.1, errorTolerance: 0.001, label: "Std Eps - Low Threshold (T=0.1, eps=0.001)" },
+    { threshold: ESTIMATION_SIMILARITY - 0.1, errorTolerance: 0.001, label: `Std Eps - Medium-Low Threshold (T=${(ESTIMATION_SIMILARITY - 0.1).toFixed(1)}, eps=0.001)` },
+    { threshold: ESTIMATION_SIMILARITY + 0.1, errorTolerance: 0.001, label: `Std Eps - Medium-High Threshold (T=${(ESTIMATION_SIMILARITY + 0.1).toFixed(1)}, eps=0.001)` },
+    { threshold: 0.9, errorTolerance: 0.001, label: "Std Eps - High Threshold (T=0.9, eps=0.001)" },
+    { threshold: ESTIMATION_SIMILARITY - 0.05, errorTolerance: 0.15, label: `Aggressive Eps - Tight Low (T=${(ESTIMATION_SIMILARITY - 0.05).toFixed(2)}, eps=0.15)` },
+    { threshold: ESTIMATION_SIMILARITY + 0.05, errorTolerance: 0.15, label: `Aggressive Eps - Tight High (T=${(ESTIMATION_SIMILARITY + 0.05).toFixed(2)}, eps=0.15)` },
+    { threshold: 0.8, errorTolerance: 0.10, label: "High Threshold, Moderate Eps (T=0.8, eps=0.10)" },
+];
+
+// sigA and sigB are already generated with ESTIMATION_SIMILARITY (e.g., 0.5)
+if (!sigA || !sigB) {
+    console.error("Signatures sigA or sigB not available for early termination benchmark. Skipping.");
+} else {
+    for (const opt of optimizationOptionsSet) {
+        console.log(`\nBenchmarking optimized estimation with ${opt.label}...`);
+        const optionsForEstimation = {
+            numGroups: NUM_GROUPS_SIG,
+            similarityThreshold: opt.threshold,
+            errorTolerance: opt.errorTolerance
+        };
+
+        let estimationsOptimizedRun = 0;
+        console.time(`estimateJaccardSimilarity Optimized (${opt.label}) Benchmark`);
+        for (let i = 0; i < NUM_ESTIMATION_RUNS; i++) {
+            try {
+                const similarity = estimateJaccardSimilarity(sigA, sigB, optionsForEstimation);
+                if (typeof similarity !== 'number') console.error('Unexpected similarity type!');
+                estimationsOptimizedRun++;
+            } catch (error) {
+                console.error(`Error estimating optimized similarity (${opt.label}):`, error);
+                break;
+            }
+        }
+        console.timeEnd(`estimateJaccardSimilarity Optimized (${opt.label}) Benchmark`);
+
+        const startTimeOptEst = Date.now();
+        estimationsOptimizedRun = 0; // Reset for manual timing loop
+        for (let i = 0; i < NUM_ESTIMATION_RUNS; i++) {
+            estimateJaccardSimilarity(sigA, sigB, optionsForEstimation);
+            estimationsOptimizedRun++;
+        }
+        const endTimeOptEst = Date.now();
+        const durationMsOptEst = endTimeOptEst - startTimeOptEst;
+
+        if (durationMsOptEst > 0) {
+            const opsPerSecondOpt = (estimationsOptimizedRun / durationMsOptEst) * 1000;
+            console.log(`Performance (Optimized Estimation, ${opt.label}): Approximately ${opsPerSecondOpt.toFixed(2)} estimations/second.`);
+        } else {
+            console.log(`(Optimized Estimation, ${opt.label}) benchmark finished too quickly.`);
+        }
+    }
+}
+
 console.log(`\n--- Benchmarking estimateJaccardSimilarity Speed vs. Bit Depth ---`);
 const bitDepthsToTest = [32, 16, 8, 4, 2];
 const { setA: setForBitDepthTest, setB: setBForBitDepthTest } = createSimilarSetsForBench(SET_SIZE * 2, ESTIMATION_SIMILARITY);

@@ -151,6 +151,116 @@ function _computeDenseHash(baseHash, bitDepth = 32) {
 
 export { murmurhash3_32_gc, murmurhash3_32_gc_single_int, hashStringFNV1a };
 
+const N_APPROX_THRESHOLD = 30; // Threshold for n_trials to consider normal approximation
+
+/**
+ * @private
+ * Calculates the Binomial Cumulative Distribution Function P(X <= k)
+ * for X ~ Bin(n, p).
+ * Uses an optimized iterative method for summing PMF terms.
+ * @param {number} k_to_sum - The value k (number of successes) to sum up to (inclusive).
+ * @param {number} n_trials - The number of trials (n).
+ * @param {number} p_success - The probability of success for a single trial (p).
+ * @returns {number} P(X <= k_to_sum).
+ */
+function _binomialCDF(k_to_sum, n_trials, p_success, mean_in, stdDev_in) {
+    if (k_to_sum < 0) return 0;
+    if (k_to_sum >= n_trials) return 1;
+
+    if (p_success === 0) return 1;
+    if (p_success === 1) return k_to_sum >= n_trials ? 1 : 0;
+
+    const np = n_trials * p_success;
+    const nq = n_trials * (1 - p_success);
+
+    if (n_trials > N_APPROX_THRESHOLD && np >= 5 && nq >= 5) {
+        return _normalApproxBinomialCDF(k_to_sum, n_trials, p_success, mean_in, stdDev_in);
+    }
+
+    let sum_prob = 0;
+    let current_pmf_term = Math.pow(1 - p_success, n_trials); // P(X=0)
+
+    if (0 <= k_to_sum) {
+        sum_prob += current_pmf_term;
+    }
+
+    // P(i) = P(i-1) * (n-i+1)/i * p/(1-p)
+    for (let i = 1; i <= k_to_sum; i++) {
+        if (current_pmf_term === 0 && p_success > 0) {
+             break;
+        }
+        const factor = ((n_trials - i + 1) / i) * (p_success / (1 - p_success));
+        current_pmf_term *= factor;
+        sum_prob += current_pmf_term;
+
+        if (sum_prob > 1.0 && sum_prob < 1.000000001) { // Handle minor floating point overflow
+            sum_prob = 1.0;
+        }
+    }
+    return Math.min(sum_prob, 1.0);
+}
+
+/**
+ * @private
+ * Approximates the Binomial Cumulative Distribution Function P(X <= k)
+ * for X ~ Bin(n, p) using the Normal Approximation with continuity correction.
+ * This is generally faster for large n.
+ * Conditions for good approximation: n*p >= 5 and n*(1-p) >= 5.
+ * @param {number} k_to_sum - The value k (number of successes) to sum up to (inclusive).
+ * @param {number} n_trials - The number of trials (n).
+ * @param {number} p_success - The probability of success for a single trial (p).
+ * @returns {number} Approximate P(X <= k_to_sum).
+ */
+function _normalApproxBinomialCDF(k_to_sum, n_trials, p_success, mean_in, stdDev_in) {
+    if (k_to_sum < 0) return 0;
+    if (k_to_sum >= n_trials) return 1;
+
+    if (p_success === 0) return 1;
+    if (p_success === 1) return k_to_sum >= n_trials ? 1 : 0;
+
+    const mean = (mean_in === undefined) ? n_trials * p_success : mean_in;
+    const stdDev = (stdDev_in === undefined) ? Math.sqrt(n_trials * p_success * (1 - p_success)) : stdDev_in;
+
+    if (stdDev === 0) {
+        return k_to_sum >= mean ? 1.0 : 0.0;
+    }
+
+    const x_corrected = k_to_sum + 0.5; // Continuity correction
+    const z = (x_corrected - mean) / stdDev;
+
+    // Standard Normal CDF: Φ(z) = 0.5 * (1 + erf(z / sqrt(2)))
+    const normalCDF = 0.5 * (1 + Math.erf(z / Math.sqrt(2)));
+    
+    return Math.max(0, Math.min(normalCDF, 1.0));
+}
+
+// Polyfill for Math.erf if not available
+if (typeof Math.erf !== 'function') {
+    // Abramowitz and Stegun approximation for erf(x) 
+    const p = 0.3275911;
+    const a1 = 0.254829592;
+    const a2 = -0.284496736;
+    const a3 = 1.421413741;
+    const a4 = -1.453152027;
+    const a5 = 1.061405429;
+
+    Math.erf = function(x) {
+        // Save the sign of x
+        let sign = 1;
+        if (x < 0) {
+            sign = -1;
+        }
+        x = Math.abs(x);
+
+        // A&S formula 7.1.26
+        const t = 1.0 / (1.0 + p * x);
+        const y = ((((a5 * t + a4) * t) + a3) * t + a2) * t + a1;
+        const result = 1.0 - y * Math.exp(-x * x);
+        
+        return sign * result;
+    };
+}
+
 /**
  * Generates a MinHash signature using a "Grouped OPH" approach.
  * Computes 'g' base hashes per element and derives 'M' signature values from each.
@@ -302,35 +412,145 @@ export function downgradeSignature(signature, targetBitDepth) {
 }
 
 /**
- * Estimates Jaccard similarity between two MinHash signatures.
+ * Estimates Jaccard similarity between two Grouped MinHash signatures.
  * Assumes signatures were generated with the same number of hash functions and compatible settings.
  * Handles signatures of different bit depths by attempting to downgrade the higher precision one.
  *
  * @param {Uint8Array|Uint16Array|Uint32Array|Array<number>} signatureA - First signature.
  * @param {Uint8Array|Uint16Array|Uint32Array|Array<number>} signatureB - Second signature.
+ * @param {object} options - Optional options object
+ * @param {number} options.numGroups - Number of groups the signature was generated with
+ * @param {number} options.similarityThreshold - Optional T from paper (target Jaccard index)
+ * @param {number} options.errorTolerance - Optional epsilon from paper (acceptable error probability for early exit)
  * @returns {number} The estimated Jaccard similarity.
  */
-export function estimateJaccardSimilarity(signatureA, signatureB) {
+export function estimateJaccardSimilarity(
+    signatureA,
+    signatureB,
+    options = {}
+) {
     if (!signatureA || !signatureB || signatureA.length !== signatureB.length) {
         throw new Error("Signatures must be non-null and of equal length.");
     }
-    if (signatureA.length === 0) return 1.0;
+    if (signatureA.length === 0) return 1.0; // Or 0.0 if definitionally no items? Paper implies 1.0 for empty sets.
 
-    let matches = 0;
-    let unionCount = 0;
-    const len = signatureA.length;
-    var i = 0;
+    const currentOptions = options === null ? {} : options;
 
-    for (; i < len; i++) {
-        const valA = signatureA[i];
-        const valB = signatureB[i];
+    const {
+        numGroups,         // Number of groups the signature was generated with
+        similarityThreshold,   // Optional T from paper (target Jaccard index)
+        errorTolerance         // Optional epsilon from paper (acceptable error probability for early exit)
+    } = currentOptions;
 
-        if (valA !== 0 || valB !== 0) { // If the slot is active in either signature
-            unionCount++;
-            if (valA === valB) { // This implies valA === valB !== 0 due to the outer condition
-                matches++;
+    const hasOptimizationOptions = numGroups !== undefined || similarityThreshold !== undefined || errorTolerance !== undefined;
+
+    if (hasOptimizationOptions) {
+        if (
+            typeof numGroups !== 'number' || numGroups <= 0 ||
+            !Number.isInteger(numGroups) ||
+            signatureA.length % numGroups !== 0
+        ) {
+            throw new Error("Invalid or missing 'numGroups' for optimized similarity estimation. It must be a positive integer and a divisor of signature length.");
+        }
+        if (typeof similarityThreshold !== 'number' || similarityThreshold < 0 || similarityThreshold > 1) {
+            throw new Error("Invalid or missing 'similarityThreshold' for optimized similarity estimation. It must be a number between 0 and 1.");
+        }
+        if (typeof errorTolerance !== 'number' || errorTolerance <= 0 || errorTolerance >= 1) {
+            throw new Error("Invalid or missing 'errorTolerance' for optimized similarity estimation. It must be a number > 0 and < 1.");
+        }
+    } else {
+        let matches = 0;
+        let unionCount = 0;
+        const len = signatureA.length;
+        var i = 0;
+        for (; i < len; i++) {
+            const valA = signatureA[i];
+            const valB = signatureB[i];
+            if (valA !== 0 || valB !== 0) { // If the slot is active in either signature
+                unionCount++;
+                if (valA === valB && valA !== 0) { // Match if equal and not "empty"
+                    matches++;
+                }
+            }
+        }
+        return unionCount === 0 ? 1.0 : matches / unionCount;
+    }
+
+    // Optimized path with early termination (this block is reached if hasOptimizationOptions is true and all params are valid)
+    const n_total_hashes = signatureA.length;
+    const k_prime = n_total_hashes / numGroups; // k' in paper (bins per group)
+    const T = similarityThreshold;
+    const epsilon = errorTolerance;
+
+    const Ma = k_prime * T; // Ma from paper (target matches in a group if overall sim=T)
+    const total_target_matches_overall = numGroups * Ma; // numGroups * k_prime * T
+
+    // Pre-calculate mean and stdDev for normal approximation if it's likely to be used
+    let precalc_norm_mean;
+    let precalc_norm_stdDev;
+    const np_approx = k_prime * T;
+    const nq_approx = k_prime * (1 - T);
+
+    if (k_prime > N_APPROX_THRESHOLD && np_approx >= 5 && nq_approx >= 5) {
+        precalc_norm_mean = np_approx;
+        precalc_norm_stdDev = Math.sqrt(np_approx * (1 - T));
+    }
+
+    let Mc = 0; // current total matched bins where valA === valB && valA !== 0
+    var  l_group_idx = 0
+    for (; l_group_idx < numGroups; l_group_idx++) { // l_group_idx is 0 to numGroups-1
+        let current_group_matches = 0;
+        const group_start_offset = l_group_idx * k_prime;
+
+        for (let i = 0; i < k_prime; i++) {
+            const sig_idx = group_start_offset + i;
+            const valA = signatureA[sig_idx];
+            const valB = signatureB[sig_idx];
+            if (valA === valB && valA !== 0) {
+                current_group_matches++;
+            }
+        }
+        Mc += current_group_matches;
+
+        if (l_group_idx === numGroups - 1) { // Last group, no more early exit checks
+            break;
+        }
+
+        // Mra: required matches in each of the remaining groups to hit T overall
+        const Mra_numerator = total_target_matches_overall - Mc;
+        const Mra_denominator = (numGroups - (l_group_idx + 1));
+
+        if (Mra_denominator === 0) break; // Should be caught by l_group_idx check
+        const Mra = Mra_numerator / Mra_denominator;
+
+        let prob_of_undesired_outcome;
+        if (Mra < Ma) {
+            // Trending "better" than T. Concerned about dropping below T.
+            // Undesired outcome: future group average is < Mra.
+            // P(X <= floor(Mra) - 1). If this probability is <= epsilon, conclude SIMILAR.
+            prob_of_undesired_outcome = _binomialCDF(Math.floor(Mra - 1e-9), k_prime, T, precalc_norm_mean, precalc_norm_stdDev);
+            if (prob_of_undesired_outcome <= epsilon) {
+                return 1.0; // Confidently similar
+            }
+        } else { // Mra >= Ma (Trending "worse" than T or on track)
+            // Undesired outcome: future group average is < Mra.
+            // P(future group average >= Mra). If this is <= epsilon, conclude DISSIMILAR.
+            prob_of_undesired_outcome = 1 - _binomialCDF(Math.ceil(Mra - 1e-9) - 1, k_prime, T, precalc_norm_mean, precalc_norm_stdDev);
+            if (prob_of_undesired_outcome <= epsilon) {
+                return 0.0; // Confidently dissimilar
             }
         }
     }
-    return unionCount === 0 ? 1.0 : matches / unionCount;
+
+    // If loop completes without early exit, calculate the final Jaccard similarity.
+    // Mc already contains total matches (valA === valB && valA !== 0) from all groups.
+    let final_unionCount = 0;
+    var i = 0;
+    for (; i < n_total_hashes; i++) {
+        if (signatureA[i] !== 0 || signatureB[i] !== 0) {
+            final_unionCount++;
+        }
+    }
+    // Mc already contains total matches where valA === valB && valA !== 0 from all groups
+    return final_unionCount === 0 ? 1.0 : Mc / final_unionCount;
 }

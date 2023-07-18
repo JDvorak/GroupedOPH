@@ -39,8 +39,9 @@
     "url": "https://github.com/JDvorak/goph/issues"
   },
   "homepage": "https://github.com/JDvorak/goph#readme",
-  "dependencies": {},
   "devDependencies": {
+    "minhash": "^0.0.9",
+    "superminhash": "^1.0.0",
     "tap": "^18.0.0"
   }
 }
