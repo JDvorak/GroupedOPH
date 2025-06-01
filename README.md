@@ -167,8 +167,6 @@ BECAUSE. I DIDN'T LIKE THE OTHER ONES, FOR REASONS (speed, incompatibility with 
 npm install grouped-oph
 ```
 
-(Assuming this package is published. For local use: `npm install ./GroupedOPH` from parent dir, or use local path.)
-
 ## License
 
 MIT
