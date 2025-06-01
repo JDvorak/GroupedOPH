@@ -1,14 +1,14 @@
-# goph - Grouped One Permutation Hashing
+# GroupedOPH - Grouped One Permutation Hashing
 
-[![npm package](https://nodei.co/npm/goph.png?downloads=true&stars=true)](https://nodei.co/npm/goph/)
+[![npm package](https://nodei.co/npm/grouped-oph.png?downloads=true&stars=true)](https://nodei.co/npm/grouped-oph/)
 
-Fast, compact MinHash signatures using Grouped One Permutation Hashing (GOPH). Useful for estimating Jaccard similarity between sets of numerical features (e.g., shingle hashes).
+Fast, compact MinHash signatures using Grouped One Permutation Hashing (GroupedOPH). Useful for estimating Jaccard similarity between sets of numerical features (e.g., shingle hashes).
 
-This library provides functions to generate GOPH sketches (signatures) with configurable bit depths (2, 4, 8, 16, 32 bits per hash value) and a rapid approximate way to compare these sketches.
+This library provides functions to generate GroupedOPH sketches (signatures) with configurable bit depths (2, 4, 8, 16, 32 bits per hash value) and a rapid approximate way to compare these sketches.
 
 ## Features
 
-- Generates GOPH signatures from sets of numerical element hashes.
+- Generates GroupedOPH signatures from sets of numerical element hashes.
 - Supports multiple bit depths (2, 4, 8, 16, 32) for signature values, allowing trade-offs between accuracy and size.
 - Estimates Jaccard similarity between signatures.
 - Includes utility to downgrade signature precision (see "Signature Downgrading Accuracy" below).
@@ -23,7 +23,7 @@ import {
     downgradeSignature,
     getBitDepth,
     murmurhash3_32_gc_single_int // also murmurhash3_32_gc, hashStringFNV1a
-} from 'goph';
+} from 'grouped-oph';
 
 // Example: Generate a signature for a set of element hashes
 const elementHashes = new Set([12345, 67890, 24680, 13579]);
@@ -79,7 +79,7 @@ console.log('MurmurHash3 of an integer:', itemHash);
 *   `numHashes` (number): Total desired length of the signature (must be divisible by `numGroups`).
 *   `numGroups` (number): Number of base hashes computed per element (g).
 *   `bitDepth` (number, default: `32`): Desired bit depth for each hash value (2, 4, 8, 16, or 32).
-*   **Returns**: `Uint8Array | Uint16Array | Uint32Array` - The GOPH signature.
+*   **Returns**: `Uint8Array | Uint16Array | Uint32Array` - The GroupedOPH signature.
 
 ### `estimateJaccardSimilarity(signatureA, signatureB, options = {})`
 
@@ -109,7 +109,7 @@ console.log('MurmurHash3 of an integer:', itemHash);
 
 ## Benchmarks
 
-Results from `node goph/benchmarks/index.js`:
+Results from `node GroupedOPH/benchmarks/index.js`:
 
 | Operation                       | Configuration                                     | Performance (approx)         |
 |---------------------------------|---------------------------------------------------|------------------------------|
@@ -152,7 +152,7 @@ For instance, to optimize for transmission, you could calculate signatures serve
 
 ## Why Grouped OPH?
 
-One Permutation Hashing (OPH) techniques, such as those explored by Li, Owen, and Zhang (2012, [arXiv:1208.1259](https://arxiv.org/abs/1208.1259)), offer improved efficiency over traditional k-permutation MinHash. GOPH builds on this by allowing a configurable number of groups (`numGroups`). This acts as a slider: `numGroups = 1` approaches the speed of basic OPH, while a higher `numGroups` (e.g., 4, as recommended for this library) increases precision, more closely approximating the accuracy of traditional MinHash but with significantly fewer computations overall. The result is a library that offers a good balance, providing strong accuracy and speed, making it suitable for applications where both are important, such as large-scale similarity detection.
+One Permutation Hashing (OPH) techniques, such as those explored by Li, Owen, and Zhang (2012, [arXiv:1208.1259](https://arxiv.org/abs/1208.1259)), offer improved efficiency over traditional k-permutation MinHash. GroupedOPH builds on this by allowing a configurable number of groups (`numGroups`). This acts as a slider: `numGroups = 1` approaches the speed of basic OPH, while a higher `numGroups` (e.g., 4, as recommended for this library) increases precision, more closely approximating the accuracy of traditional MinHash but with significantly fewer computations overall. The result is a library that offers a good balance, providing strong accuracy and speed, making it suitable for applications where both are important, such as large-scale similarity detection.
 
 It's worth noting that the term "GOPH" also appears in other research with different specific mechanics—a bit of a "convergent evolution" scenario, as the core signature generation in this library was developed independently! For example, the GOPH described by Zhang et al. in "Hierarchical One Permutation Hashing: Efficient Multimedia Near Duplicate Detection" (2018, [arXiv:1805.11254v2](https://arxiv.org/abs/1805.11254)) primarily detailed an optimized *comparison strategy* for OPH-generated fingerprints, using probabilistic early termination to speed up similarity estimation. After a helpful tip from a friend about this paper, this library has now adopted a similar early-termination strategy (the one described by Zhang et al.) for its `estimateJaccardSimilarity` function when provided with appropriate options (see API docs and benchmark table), offering further speedups in certain scenarios. The original signature generation method in this library remains distinct, focusing on `numGroups` to structure the MinHash signature directly.
 
@@ -164,10 +164,10 @@ BECAUSE. I DIDN'T LIKE THE OTHER ONES, FOR REASONS (speed, incompatibility with 
 ## Installation
 
 ```bash
-npm install goph
+npm install grouped-oph
 ```
 
-(Assuming this package is published. For local use: `npm install ./goph` from parent dir, or use local path.)
+(Assuming this package is published. For local use: `npm install ./GroupedOPH` from parent dir, or use local path.)
 
 ## License
 

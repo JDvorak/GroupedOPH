@@ -1,7 +1,7 @@
 {
-  "name": "goph",
+  "name": "grouped-oph",
   "version": "1.0.0",
-  "description": "Grouped One Permutation Hashing (GOPH) implementation for MinHash signature generation.",
+  "description": "Grouped One Permutation Hashing (GroupedOPH) implementation for MinHash signature generation.",
   "main": "index.js",
   "type": "module",
   "directories": {
@@ -21,13 +21,13 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/JDvorak/goph.git"
+    "url": "git+https://github.com/JDvorak/GroupedOPH.git"
   },
   "keywords": [
     "minhash",
     "oph",
     "grouped-oph",
-    "goph",
+    "GroupedOPH",
     "hashing",
     "jaccard",
     "similarity",
@@ -36,9 +36,9 @@
   "author": "John Dvorak <john@johnsdvorak.com>",
   "license": "MIT",
   "bugs": {
-    "url": "https://github.com/JDvorak/goph/issues"
+    "url": "https://github.com/JDvorak/GroupedOPH/issues"
   },
-  "homepage": "https://github.com/JDvorak/goph#readme",
+  "homepage": "https://github.com/JDvorak/GroupedOPH#readme",
   "devDependencies": {
     "minhash": "^0.0.9",
     "superminhash": "^1.0.0",
