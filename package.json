@@ -1,6 +1,6 @@
 {
   "name": "goph",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "Grouped One Permutation Hashing (GOPH) implementation for MinHash signature generation.",
   "main": "index.js",
   "type": "module",
