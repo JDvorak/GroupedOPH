@@ -11,7 +11,8 @@
 function hashStringFNV1a(str) {
     let hash = 2166136261;
     const len = str.length;
-    for (var i = 0;i< len; i++) {
+    var i = 0;
+    for (;i< len; i++) {
         hash = Math.imul(hash ^ str.charCodeAt(i), 16777619);
     }
     return hash >>> 0;
@@ -422,6 +423,7 @@ export function downgradeSignature(signature, targetBitDepth) {
  * @param {number} options.numGroups - Number of groups the signature was generated with
  * @param {number} options.similarityThreshold - Optional T from paper (target Jaccard index)
  * @param {number} options.errorTolerance - Optional epsilon from paper (acceptable error probability for early exit)
+ * @param {number} options.maxGroups - Optional limit on number of groups to use (for fast approximation)
  * @returns {number} The estimated Jaccard similarity.
  */
 export function estimateJaccardSimilarity(
@@ -439,12 +441,15 @@ export function estimateJaccardSimilarity(
     const {
         numGroups,         // Number of groups the signature was generated with
         similarityThreshold,   // Optional T from paper (target Jaccard index)
-        errorTolerance         // Optional epsilon from paper (acceptable error probability for early exit)
+        errorTolerance,        // Optional epsilon from paper (acceptable error probability for early exit)
+        maxGroups              // Optional limit on number of groups to use (for fast approximation)
     } = currentOptions;
 
-    const hasOptimizationOptions = numGroups !== undefined || similarityThreshold !== undefined || errorTolerance !== undefined;
+    const hasStatisticalEarlyTermination = similarityThreshold !== undefined || errorTolerance !== undefined;
+    const hasFastMode = maxGroups !== undefined;
+    const needsNumGroups = hasStatisticalEarlyTermination || hasFastMode;
 
-    if (hasOptimizationOptions) {
+    if (needsNumGroups) {
         if (
             typeof numGroups !== 'number' || numGroups <= 0 ||
             !Number.isInteger(numGroups) ||
@@ -452,18 +457,25 @@ export function estimateJaccardSimilarity(
         ) {
             throw new Error("Invalid or missing 'numGroups' for optimized similarity estimation. It must be a positive integer and a divisor of signature length.");
         }
-        if (typeof similarityThreshold !== 'number' || similarityThreshold < 0 || similarityThreshold > 1) {
-            throw new Error("Invalid or missing 'similarityThreshold' for optimized similarity estimation. It must be a number between 0 and 1.");
+        
+        // Validate statistical early termination parameters if any are provided
+        if (hasStatisticalEarlyTermination) {
+            if (typeof similarityThreshold !== 'number' || similarityThreshold < 0 || similarityThreshold > 1) {
+                throw new Error("Invalid or missing 'similarityThreshold' for optimized similarity estimation. It must be a number between 0 and 1.");
+            }
+            if (typeof errorTolerance !== 'number' || errorTolerance <= 0 || errorTolerance >= 1) {
+                throw new Error("Invalid or missing 'errorTolerance' for optimized similarity estimation. It must be a number > 0 and < 1.");
+            }
         }
-        if (typeof errorTolerance !== 'number' || errorTolerance <= 0 || errorTolerance >= 1) {
-            throw new Error("Invalid or missing 'errorTolerance' for optimized similarity estimation. It must be a number > 0 and < 1.");
+        
+        if (hasFastMode && (typeof maxGroups !== 'number' || maxGroups <= 0 || !Number.isInteger(maxGroups) || maxGroups > numGroups)) {
+            throw new Error("Invalid 'maxGroups' for fast approximation. It must be a positive integer <= numGroups.");
         }
     } else {
         let matches = 0;
         let unionCount = 0;
         const len = signatureA.length;
-        var i = 0;
-        for (; i < len; i++) {
+        for (let i = 0; i < len; i++) {
             const valA = signatureA[i];
             const valB = signatureB[i];
             if (valA !== 0 || valB !== 0) { // If the slot is active in either signature
@@ -476,81 +488,99 @@ export function estimateJaccardSimilarity(
         return unionCount === 0 ? 1.0 : matches / unionCount;
     }
 
-    // Optimized path with early termination (this block is reached if hasOptimizationOptions is true and all params are valid)
+    // Optimized path with early termination
     const n_total_hashes = signatureA.length;
     const k_prime = n_total_hashes / numGroups; // k' in paper (bins per group)
     const T = similarityThreshold;
     const epsilon = errorTolerance;
 
+    // Pre-calculate constants to avoid repeated computation
     const Ma = k_prime * T; // Ma from paper (target matches in a group if overall sim=T)
     const total_target_matches_overall = numGroups * Ma; // numGroups * k_prime * T
+    const np_approx = k_prime * T;
+    const nq_approx = k_prime * (1 - T);
 
     // Pre-calculate mean and stdDev for normal approximation if it's likely to be used
     let precalc_norm_mean;
     let precalc_norm_stdDev;
-    const np_approx = k_prime * T;
-    const nq_approx = k_prime * (1 - T);
-
-    if (k_prime > N_APPROX_THRESHOLD && np_approx >= 5 && nq_approx >= 5) {
+    if (hasStatisticalEarlyTermination && k_prime > N_APPROX_THRESHOLD && np_approx >= 5 && nq_approx >= 5) {
         precalc_norm_mean = np_approx;
         precalc_norm_stdDev = Math.sqrt(np_approx * (1 - T));
     }
 
     let Mc = 0; // current total matched bins where valA === valB && valA !== 0
-    var  l_group_idx = 0
-    for (; l_group_idx < numGroups; l_group_idx++) { // l_group_idx is 0 to numGroups-1
+    let final_unionCount = 0; // Calculate union count as we go to avoid second pass
+    
+    // Determine how many groups to actually process
+    const effectiveNumGroups = hasFastMode ? Math.min(maxGroups, numGroups) : numGroups;
+    
+    for (let l_group_idx = 0; l_group_idx < effectiveNumGroups; l_group_idx++) {
         let current_group_matches = 0;
         const group_start_offset = l_group_idx * k_prime;
+        const group_end_offset = group_start_offset + k_prime;
 
-        for (let i = 0; i < k_prime; i++) {
-            const sig_idx = group_start_offset + i;
+        // Single loop to count matches and union elements for this group
+        for (let sig_idx = group_start_offset; sig_idx < group_end_offset; sig_idx++) {
             const valA = signatureA[sig_idx];
             const valB = signatureB[sig_idx];
+            
+            // Count union elements
+            if (valA !== 0 || valB !== 0) {
+                final_unionCount++;
+            }
+            
+            // Count matches
             if (valA === valB && valA !== 0) {
                 current_group_matches++;
             }
         }
+        
         Mc += current_group_matches;
 
-        if (l_group_idx === numGroups - 1) { // Last group, no more early exit checks
+        // Skip early exit check for last group
+        if (l_group_idx === effectiveNumGroups - 1) {
             break;
         }
 
-        // Mra: required matches in each of the remaining groups to hit T overall
-        const Mra_numerator = total_target_matches_overall - Mc;
-        const Mra_denominator = (numGroups - (l_group_idx + 1));
+        // Early exit logic - cache denominator calculation
+        const remaining_groups = effectiveNumGroups - (l_group_idx + 1);
+        
+        // Adjust target matches for the effective number of groups we're using
+        const effective_target_matches = hasFastMode ? effectiveNumGroups * Ma : total_target_matches_overall;
+        const Mra = (effective_target_matches - Mc) / remaining_groups;
 
-        if (Mra_denominator === 0) break; // Should be caught by l_group_idx check
-        const Mra = Mra_numerator / Mra_denominator;
+        // Only do statistical early exit if we have both optimization parameters
+        if (!hasStatisticalEarlyTermination || similarityThreshold === undefined || errorTolerance === undefined) {
+            continue; // Skip early exit logic, just compute with limited groups
+        }
 
         let prob_of_undesired_outcome;
         if (Mra < Ma) {
             // Trending "better" than T. Concerned about dropping below T.
-            // Undesired outcome: future group average is < Mra.
-            // P(X <= floor(Mra) - 1). If this probability is <= epsilon, conclude SIMILAR.
             prob_of_undesired_outcome = _binomialCDF(Math.floor(Mra - 1e-9), k_prime, T, precalc_norm_mean, precalc_norm_stdDev);
             if (prob_of_undesired_outcome <= epsilon) {
-                return 1.0; // Confidently similar
+                // Confident it's above threshold - estimate final similarity
+                // Estimate remaining union count based on current ratio
+                const processed_elements = (l_group_idx + 1) * k_prime;
+                const union_ratio = final_unionCount / processed_elements;
+                const estimated_total_union = union_ratio * n_total_hashes;
+                
+                // Estimate remaining matches based on current match rate
+                const match_ratio = Mc / processed_elements;
+                const estimated_total_matches = match_ratio * n_total_hashes;
+                
+                return estimated_total_union === 0 ? 1.0 : estimated_total_matches / estimated_total_union;
             }
         } else { // Mra >= Ma (Trending "worse" than T or on track)
-            // Undesired outcome: future group average is < Mra.
-            // P(future group average >= Mra). If this is <= epsilon, conclude DISSIMILAR.
-            prob_of_undesired_outcome = 1 - _binomialCDF(Math.ceil(Mra - 1e-9) - 1, k_prime, T, precalc_norm_mean, precalc_norm_stdDev);
+            // Use pre-calculated ceiling to avoid repeated Math.ceil calls
+            const ceiling_Mra = Math.ceil(Mra - 1e-9);
+            prob_of_undesired_outcome = 1 - _binomialCDF(ceiling_Mra - 1, k_prime, T, precalc_norm_mean, precalc_norm_stdDev);
             if (prob_of_undesired_outcome <= epsilon) {
                 return 0.0; // Confidently dissimilar
             }
         }
     }
 
-    // If loop completes without early exit, calculate the final Jaccard similarity.
-    // Mc already contains total matches (valA === valB && valA !== 0) from all groups.
-    let final_unionCount = 0;
-    var i = 0;
-    for (; i < n_total_hashes; i++) {
-        if (signatureA[i] !== 0 || signatureB[i] !== 0) {
-            final_unionCount++;
-        }
-    }
-    // Mc already contains total matches where valA === valB && valA !== 0 from all groups
+    // Return final similarity using the groups we processed (all or limited by maxGroups)
     return final_unionCount === 0 ? 1.0 : Mc / final_unionCount;
 }

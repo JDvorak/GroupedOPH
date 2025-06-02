@@ -1,6 +1,6 @@
 {
   "name": "grouped-oph",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Grouped One Permutation Hashing (GroupedOPH) implementation for MinHash signature generation.",
   "main": "index.js",
   "type": "module",

@@ -188,6 +188,128 @@ if (!sigA || !sigB) {
     }
 }
 
+console.log(`\n--- Benchmarking estimateJaccardSimilarity FAST APPROXIMATION (maxGroups) ---`);
+console.log(`Testing speed vs accuracy trade-offs with limited number of groups...`);
+
+// Test different maxGroups values
+const fastModeConfigs = [
+    { maxGroups: 4, label: "Full Precision (4 groups)" },
+    { maxGroups: 1, label: "Ultra Fast (1 group)" },
+    { maxGroups: 2, label: "Balanced Fast (2 groups)" },
+    { maxGroups: 3, label: "Precision Fast (3 groups)" }
+];
+
+if (!sigA || !sigB) {
+    console.error("Signatures sigA or sigB not available for fast approximation benchmark. Skipping.");
+} else {
+    console.log(`Using signatures with estimated similarity ≈ ${ESTIMATION_SIMILARITY} for fast approximation tests.`);
+    
+    // First, get the baseline full comparison result
+    const baselineResult = estimateJaccardSimilarity(sigA, sigB);
+    console.log(`Baseline similarity (4 groups): ${baselineResult.toFixed(4)}`);
+    
+    for (const config of fastModeConfigs) {
+        console.log(`\nBenchmarking fast approximation: ${config.label}...`);
+        const fastOptions = {
+            numGroups: NUM_GROUPS_SIG,
+            maxGroups: config.maxGroups
+        };
+
+        // Measure accuracy by comparing against baseline
+        const fastResult = estimateJaccardSimilarity(sigA, sigB, fastOptions);
+        const accuracyError = Math.abs(fastResult - baselineResult);
+        console.log(`${config.label} similarity: ${fastResult.toFixed(4)} (error vs baseline: ${accuracyError.toFixed(4)})`);
+
+        // Performance benchmark
+        let estimationsFastRun = 0;
+        console.time(`Fast Approximation (${config.label}) Benchmark`);
+        for (let i = 0; i < NUM_ESTIMATION_RUNS; i++) {
+            try {
+                const similarity = estimateJaccardSimilarity(sigA, sigB, fastOptions);
+                if (typeof similarity !== 'number') console.error('Unexpected similarity type!');
+                estimationsFastRun++;
+            } catch (error) {
+                console.error(`Error in fast approximation (${config.label}):`, error);
+                break;
+            }
+        }
+        console.timeEnd(`Fast Approximation (${config.label}) Benchmark`);
+
+        // Manual timing for ops/sec calculation
+        const startTimeFast = Date.now();
+        estimationsFastRun = 0; // Reset for manual timing loop
+        for (let i = 0; i < NUM_ESTIMATION_RUNS; i++) {
+            estimateJaccardSimilarity(sigA, sigB, fastOptions);
+            estimationsFastRun++;
+        }
+        const endTimeFast = Date.now();
+        const durationMsFast = endTimeFast - startTimeFast;
+
+        if (durationMsFast > 0) {
+            const opsPerSecondFast = (estimationsFastRun / durationMsFast) * 1000;
+            console.log(`Performance (${config.label}): Approximately ${opsPerSecondFast.toFixed(2)} estimations/second.`);
+            
+            // Calculate speedup compared to full comparison
+            if (config.maxGroups === 4) {
+                console.log(`${config.label}: Baseline performance (no speedup)`);
+                // Store baseline for comparison with other configs
+                global.baselineOpsPerSecond = opsPerSecondFast;
+            } else {
+                // Calculate speedup vs baseline if baseline was set
+                if (global.baselineOpsPerSecond) {
+                    const speedup = opsPerSecondFast / global.baselineOpsPerSecond;
+                    console.log(`${config.label}: ${speedup.toFixed(2)}x speed vs 4-group baseline`);
+                }
+            }
+        } else {
+            console.log(`(${config.label}) benchmark finished too quickly.`);
+        }
+    }
+    
+    // Test combined fast approximation + early termination
+    console.log(`\n--- Combined Fast Approximation + Early Termination ---`);
+    const combinedConfig = {
+        numGroups: NUM_GROUPS_SIG,
+        maxGroups: 2, // Use 2 groups for speed
+        similarityThreshold: ESTIMATION_SIMILARITY - 0.05, // Slightly below expected
+        errorTolerance: 0.05 // Moderate tolerance
+    };
+    
+    console.log(`Testing 2-group fast approximation with early termination (T=${combinedConfig.similarityThreshold}, eps=${combinedConfig.errorTolerance})...`);
+    
+    let combinedResult;
+    let estimationsCombinedRun = 0;
+    console.time('Combined Fast + Early Termination Benchmark');
+    for (let i = 0; i < NUM_ESTIMATION_RUNS; i++) {
+        try {
+            combinedResult = estimateJaccardSimilarity(sigA, sigB, combinedConfig);
+            if (typeof combinedResult !== 'number') console.error('Unexpected similarity type!');
+            estimationsCombinedRun++;
+        } catch (error) {
+            console.error('Error in combined fast + early termination:', error);
+            break;
+        }
+    }
+    console.timeEnd('Combined Fast + Early Termination Benchmark');
+    
+    const startTimeCombined = Date.now();
+    estimationsCombinedRun = 0;
+    for (let i = 0; i < NUM_ESTIMATION_RUNS; i++) {
+        estimateJaccardSimilarity(sigA, sigB, combinedConfig);
+        estimationsCombinedRun++;
+    }
+    const endTimeCombined = Date.now();
+    const durationMsCombined = endTimeCombined - startTimeCombined;
+    
+    if (durationMsCombined > 0) {
+        const opsPerSecondCombined = (estimationsCombinedRun / durationMsCombined) * 1000;
+        console.log(`Performance (Combined Fast + Early Term): Approximately ${opsPerSecondCombined.toFixed(2)} estimations/second.`);
+        console.log(`Combined result: ${combinedResult.toFixed(4)} (vs baseline: ${baselineResult.toFixed(4)})`);
+    } else {
+        console.log('Combined benchmark finished too quickly.');
+    }
+}
+
 console.log(`\n--- Benchmarking estimateJaccardSimilarity Speed vs. Bit Depth ---`);
 const bitDepthsToTest = [32, 16, 8, 4, 2];
 const { setA: setForBitDepthTest, setB: setBForBitDepthTest } = createSimilarSetsForBench(SET_SIZE * 2, ESTIMATION_SIMILARITY);

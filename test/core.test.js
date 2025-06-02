@@ -158,6 +158,49 @@ test('estimateJaccardSimilarity - Functionality and Edge Cases', (t) => {
         estimateJaccardSimilarity(new Uint8Array([1, 2, 3]), null);
     }, /Signatures must be non-null and of equal length/, 'Throws for null signature B');
 
+    // Test early termination optimization with actual similarity estimation
+    const optSigA = new Uint8Array([10, 20, 30, 40, 50, 60, 70, 80]);
+    const optSigB = new Uint8Array([10, 20, 35, 45, 55, 65, 75, 85]);
+    
+    // Test with optimization options - should return estimated similarity, not 1.0
+    const optResult = estimateJaccardSimilarity(optSigA, optSigB, {
+        numGroups: 2,
+        similarityThreshold: 0.1, // Very low threshold - should trigger "confident similar" path
+        errorTolerance: 0.01
+    });
+    
+    t.ok(optResult > 0.1 && optResult < 1.0, 'Early termination with low threshold should return estimated similarity, not 1.0');
+    t.notEqual(optResult, 1.0, 'Should not return 1.0 with new estimation behavior');
+    
+    // Verify it matches non-optimized result when threshold doesn't trigger early exit
+    const regularResult = estimateJaccardSimilarity(optSigA, optSigB);
+    
+    // Test with high threshold - should return 0.0 (confidently dissimilar)
+    const dissimilarResult = estimateJaccardSimilarity(optSigA, optSigB, {
+        numGroups: 2,
+        similarityThreshold: 0.95, // Very high threshold
+        errorTolerance: 0.01
+    });
+    
+    t.equal(dissimilarResult, 0.0, 'High threshold should return 0.0 (confidently dissimilar)');
+
+    // Test fast approximation with maxGroups
+    const fastResult1Group = estimateJaccardSimilarity(optSigA, optSigB, {
+        numGroups: 2,
+        maxGroups: 1  // Use only first group for fast approximation
+    });
+    
+    const fastResult2Groups = estimateJaccardSimilarity(optSigA, optSigB, {
+        numGroups: 2,
+        maxGroups: 2  // Use all groups (should match regular result)
+    });
+    
+    t.ok(fastResult1Group >= 0 && fastResult1Group <= 1, 'Fast approximation with 1 group should return valid similarity');
+    t.equal(fastResult2Groups, regularResult, 'Using maxGroups=numGroups should match regular result');
+    
+    // Test that 1 group gives a rougher approximation (may differ from full result)
+    t.ok(typeof fastResult1Group === 'number', 'Fast approximation should return a number');
+
     t.end();
 });
 

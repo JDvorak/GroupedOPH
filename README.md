@@ -87,10 +87,11 @@ console.log('MurmurHash3 of an integer:', itemHash);
 *   `signatureB` (TypedArray): Second signature.
 *   `options` (object, optional): Configuration for similarity estimation.
     *   `numGroups` (number): The number of groups the signatures were generated with. **Required if using other optimization options.** Must be a positive integer, and `signatureA.length` must be divisible by `numGroups`.
-    *   `similarityThreshold` (number): The Jaccard similarity threshold (0 to 1) for early termination. If the algorithm can confidently determine that the true similarity is above or below this threshold with an error probability less than `errorTolerance`, it may return an approximate result early. **Required if using other optimization options.**
-    *   `errorTolerance` (number): The acceptable probability (0 to 1, e.g., 0.01 for 1%) of making an incorrect early termination decision. **Required if using other optimization options.**
+    *   `similarityThreshold` (number): The Jaccard similarity threshold (0 to 1) for early termination. If the algorithm can confidently determine that the true similarity is above or below this threshold with an error probability less than `errorTolerance`, it may return an approximate result early. **Required if using statistical early termination.**
+    *   `errorTolerance` (number): The acceptable probability (0 to 1, e.g., 0.01 for 1%) of making an incorrect early termination decision. **Required if using statistical early termination.**
+    *   `maxGroups` (number): Limit the number of groups to use for fast approximation (1 to `numGroups`). Using fewer groups provides faster computation with reduced accuracy. Can be combined with statistical early termination.
 *   **Returns**: `number` - Estimated Jaccard similarity (0 to 1).
-    Throws an error if signatures are null, not of equal length, or if optimization options are provided incorrectly (e.g., missing one of the required fields, or `numGroups` is invalid for the given signatures). If optimization options are provided, the function may return `1.0` if it determines the sets are likely similar enough according to the threshold, or `0.0` if likely dissimilar enough, without computing the exact Jaccard index.
+    Throws an error if signatures are null, not of equal length, or if optimization options are provided incorrectly (e.g., missing required fields, or `numGroups` is invalid for the given signatures). When using statistical early termination options, the function may return estimated similarity if it determines the sets are likely similar enough according to the threshold, or `0.0` if likely dissimilar enough, without computing the exact Jaccard index.
 
 ### `downgradeSignature(signature, targetBitDepth)`
 
@@ -113,24 +114,47 @@ Results from `node GroupedOPH/benchmarks/index.js`:
 
 | Operation                       | Configuration                                     | Performance (approx)         |
 |---------------------------------|---------------------------------------------------|------------------------------|
-| `generateGroupedOPHSignature` | 50k sets (avg size 50), sig size 128, 4 groups, 32-bit | 205,761 sigs/sec            |
-| `estimateJaccardSimilarity`   | 100k estimations, sig size 128, 32-bit            | 4,347,826 estimations/sec |
-| `downgradeSignature`            | 32-bit to 8-bit                                   | 1,111,111 downgrades/sec   |
+| `generateGroupedOPHSignature` | 50k sets (avg size 50), sig size 128, 4 groups, 32-bit | 156,740 sigs/sec            |
+| `estimateJaccardSimilarity`   | 100k estimations, sig size 128, 32-bit            | 3,571,429 estimations/sec |
+| `downgradeSignature`            | 32-bit to 8-bit                                   | 775,194 downgrades/sec   |
 
 Below are more detailed benchmarks for `estimateJaccardSimilarity`, including the early termination optimization. The "Optimized" scenarios use `numGroups: 4`, and signatures are 32-bit, 128 hashes long. The actual Jaccard similarity of the test signatures is ≈ 0.5.
 
 | `estimateJaccardSimilarity` Scenario                        | Target Threshold (T) | Error Tolerance (eps) | Performance (approx)          | Notes                                                                          |
 |-------------------------------------------------------------|----------------------|-----------------------|-------------------------------|--------------------------------------------------------------------------------|
-| Optimized (Std Eps)                                         | 0.9                  | 0.001                 | 9,091,000 estimations/sec   | Threshold far from actual; confident early exit (rounded).                 |
-| High Threshold, Moderate Eps (T=0.8, eps=0.10)              | 0.8                  | 0.10                  | 7,143,000 estimations/sec   | Threshold far from actual; confident early exit (moderate eps, rounded). |
-| Optimized (Std Eps)                                         | 0.1                  | 0.001                 | 4,762,000 estimations/sec   | Threshold far from actual; confident early exit (rounded).                 |
-| **Baseline (Full Comparison)**                              | N/A                  | N/A                   | **4,348,000 estimations/sec** | Baseline performance (rounded for table consistency).                  |
-| Optimized (Aggressive Eps)                                  | 0.55                 | 0.15                  | 4,348,000 estimations/sec   | Threshold very close; aggressive epsilon allows more early exits (rounded). |
-| Optimized (Aggressive Eps)                                  | 0.45                 | 0.15                  | 3,030,000 estimations/sec   | Threshold very close; aggressive epsilon allows more early exits (rounded). |
-| Optimized (Std Eps)                                         | 0.6                  | 0.001                 | 3,333,000 estimations/sec   | Threshold closer to actual; normal approx. aids (rounded).               |
-| Optimized (Std Eps)                                         | 0.4                  | 0.001                 | 1,923,000 estimations/sec   | Threshold closer to actual; normal approx. aids (rounded).               |
+| High Threshold, Moderate Eps (T=0.8, eps=0.10)              | 0.8                  | 0.10                  | 6,666,667 estimations/sec   | Threshold far from actual; confident early exit (moderate eps). |
+| Optimized (Std Eps)                                         | 0.9                  | 0.001                 | 4,761,905 estimations/sec   | Threshold far from actual; confident early exit.                 |
+| **Baseline (Full Comparison)**                              | N/A                  | N/A                   | **3,571,429 estimations/sec** | Baseline performance for 32-bit signatures.                  |
+| Optimized (Aggressive Eps)                                  | 0.55                 | 0.15                  | 3,225,806 estimations/sec   | Threshold close; aggressive epsilon allows some early exits. |
+| Optimized (Std Eps)                                         | 0.1                  | 0.001                 | 3,125,000 estimations/sec   | Threshold far from actual; confident early exit.                 |
+| Optimized (Aggressive Eps)                                  | 0.45                 | 0.15                  | 2,777,778 estimations/sec   | Threshold very close; aggressive epsilon allows some early exits. |
+| Optimized (Std Eps)                                         | 0.6                  | 0.001                 | 2,631,579 estimations/sec   | Threshold closer to actual; normal approx. aids.               |
+| Optimized (Std Eps)                                         | 0.4                  | 0.001                 | 1,587,302 estimations/sec   | Threshold closer to actual; normal approx. aids.               |
 
-This shows that the early termination provides a significant speedup when the similarity threshold is clearly different from the actual similarity of the pair, allowing for a confident early decision. If the threshold is very close to the actual similarity, the overhead of the checks for early termination might result in slower performance than a direct full comparison, unless a more aggressive error tolerance is used which might allow for faster (though potentially less accurate) decisions. 
+### Fast Approximation (maxGroups) Performance
+
+The `maxGroups` parameter allows you to use only the first N groups for faster computation with controlled accuracy trade-offs:
+
+| Fast Approximation Mode                                     | Groups Used | Accuracy Error (vs Full) | Performance (approx)          | Speedup vs Full        | Use Case                           |
+|-------------------------------------------------------------|-------------|---------------------------|-------------------------------|------------------------|------------------------------------|
+| **Full Precision (4 groups)**                              | 4           | 0.0000                    | **3,333,333 estimations/sec** | **1.0x (baseline)**   | **Final comparison, highest accuracy** |
+| Precision Fast (3 groups)                                  | 3           | 0.0001                    | 5,555,556 estimations/sec   | 1.67x faster          | Refined filtering                  |
+| Balanced Fast (2 groups)                                   | 2           | 0.0103                    | 7,142,857 estimations/sec   | 2.14x faster          | Balanced speed/accuracy            |
+| Ultra Fast (1 group)                                       | 1           | 0.1353                    | 14,285,714 estimations/sec  | 4.29x faster          | Initial rough filtering            |
+
+**Usage Example:**
+```javascript
+// Multi-tier filtering approach
+const roughSimilarity = estimateJaccardSimilarity(sigA, sigB, { numGroups: 4, maxGroups: 1 });
+if (roughSimilarity > 0.3) {
+    const refinedSimilarity = estimateJaccardSimilarity(sigA, sigB, { numGroups: 4, maxGroups: 2 });
+    if (refinedSimilarity > 0.5) {
+        const finalSimilarity = estimateJaccardSimilarity(sigA, sigB); // Full precision
+    }
+}
+```
+
+This shows that the early termination provides a significant speedup when the similarity threshold is clearly different from the actual similarity of the pair, allowing for a confident early decision. If the threshold is very close to the actual similarity, the overhead of the checks for early termination might result in slower performance than a direct full comparison, unless a more aggressive error tolerance is used which might allow for faster (though potentially less accurate) decisions.
 
 ## Signature Downgrading Accuracy
 
