@@ -478,12 +478,15 @@ export function estimateJaccardSimilarity(
         for (let i = 0; i < len; i++) {
             const valA = signatureA[i];
             const valB = signatureB[i];
-            if (valA !== 0 || valB !== 0) { // If the slot is active in either signature
-                unionCount++;
-                if (valA === valB && valA !== 0) { // Match if equal and not "empty"
-                    matches++;
-                }
-            }
+            // Branchless version using arithmetic and bitwise operations
+            // unionCount += (valA !== 0 || valB !== 0) ? 1 : 0;
+            // matches += (valA === valB && valA !== 0) ? 1 : 0;
+            // The following is branchless:
+            const isActive = ((valA | valB) !== 0) | 0; // 1 if either is nonzero, else 0
+            unionCount += isActive;
+            // (valA === valB) is 1 if equal, 0 if not; (valA !== 0) is 1 if nonzero, 0 if zero
+            // So: (valA === valB) & (valA !== 0) is 1 if both true, else 0
+            matches += ((valA === valB) & (valA !== 0));
         }
         return unionCount === 0 ? 1.0 : matches / unionCount;
     }
@@ -524,15 +527,11 @@ export function estimateJaccardSimilarity(
             const valA = signatureA[sig_idx];
             const valB = signatureB[sig_idx];
             
-            // Count union elements
-            if (valA !== 0 || valB !== 0) {
-                final_unionCount++;
-            }
-            
-            // Count matches
-            if (valA === valB && valA !== 0) {
-                current_group_matches++;
-            }
+            // Branchless counting for union and matches
+            // union: increment if either is nonzero
+            final_unionCount += ((valA | valB) !== 0) | 0;
+            // matches: increment if equal and nonzero
+            current_group_matches += ((valA === valB) & (valA !== 0));
         }
         
         Mc += current_group_matches;
