@@ -15,7 +15,7 @@
     "CHANGELOG.md"
   ],
   "scripts": {
-    "test": "tap test/**/*.test.js",
+    "test": "node --test test/**/*.test.js",
     "benchmark": "node benchmarks/index.js",
     "example": "node example.js"
   },
